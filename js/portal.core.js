@@ -6,7 +6,7 @@ var signedIn = false, loginPending = false, logoutPending = false;
 var attemptUser = '', attemptPass = '';
 var statusTimer = 0, errorTimer = 0, welcomeTimer = 0, blockTimer = 0;
 var statusRequest = null, statusFailures = 0, epoch = 0;
-var loginTimestamp = 0, earlyNegativeCount = 0;
+var loginTimestamp = 0, loginStartedAt = 0, earlyNegativeCount = 0;
 var loginConfirmTimer = 0, loginConfirmCount = 0;
 var recentCards = [];
 var STORE = cfg.storageKey || 'hotspot_saved_cards_v3';
@@ -95,10 +95,13 @@ code = 'NO_VALID_PROFILE'; message = BAD_CARD_MESSAGE;
 code = 'USER_NOT_FOUND'; message = BAD_CARD_MESSAGE;
 } else if (/\b(?:invalid username|invalid user name|invalid user)(?!\s+(?:or|and|&)\s+password)\b/.test(t)) {
 code = 'INVALID_USERNAME'; message = BAD_CARD_MESSAGE;
-} else if (/\b(?:invalid (?:username|user name|user) (?:or|and|&) password|wrong (?:username|user name) or password|invalid credentials|incorrect (?:username|user name) or password|authentication failed|access.reject|radius reject|bad credentials)\b|(?:بيانات الدخول|بيانات الحساب) غير صحيحة/.test(t)) {
+} else if (/\b(?:invalid (?:username|user name|user) (?:or|and|&) password|wrong (?:username|user name) or password|invalid credentials|incorrect (?:username|user name) or password|bad credentials)\b|(?:بيانات الدخول|بيانات الحساب) غير صحيحة/.test(t)) {
 code = 'INVALID_CREDENTIALS'; message = hasPassword ? 'اسم المستخدم أو كلمة المرور خطأ' : BAD_CARD_MESSAGE;
 } else if (/\b(?:invalid password|wrong password|bad password|incorrect password)\b|كلمة المرور غير صحيحة/.test(t)) {
 code = 'INVALID_PASSWORD'; message = hasPassword ? 'كلمة المرور خطأ' : BAD_CARD_MESSAGE;
+} else if (/\b(?:authentication failed|access.reject|radius reject|radius rejection|access denied by radius)\b/.test(t)) {
+/* A generic RADIUS reject can mean credentials, quota, expiry or policy. */
+code = 'AUTH_REJECTED'; message = 'رفض الخادم الدخول، تحقق من الكرت أو تواصل مع الدعم';
 } else if (/\b(?:login denied|access denied|authorization denied|login not allowed|login rejected|not allowed to login)\b|تم رفض تسجيل الدخول/.test(t)) {
 code = 'REJECTED'; message = hasPassword ? 'تعذر الدخول، تحقق من بيانات الكرت' : BAD_CARD_MESSAGE;
 } else if (/[\u0600-\u06FF]/.test(text) && !/[A-Za-z]/.test(text)) {
@@ -140,7 +143,7 @@ if ($status) { $status.style.display = 'block'; addClass($status, 'active'); }
 if ($login) { $login.style.display = 'none'; addClass($login, 'inactive'); }
 }
 function finishLogin() {
-clearTimeout(loginConfirmTimer); loginConfirmTimer = 0; loginConfirmCount = 0;
+clearTimeout(loginConfirmTimer); loginConfirmTimer = 0; loginConfirmCount = 0; loginStartedAt = 0;
 loginPending = false;
 if ($submit) { $submit.disabled = false; removeClass($submit, 'processing'); }
 }
@@ -273,7 +276,8 @@ renderCards();
 }
 function formatBytes(v) {
 var s = trim(v);
-if (!s || s === '---' || s.toLowerCase() === 'unlimited') return 'غير محدود';
+if (!s || s === '---') return 'غير متاح';
+if (s.toLowerCase() === 'unlimited') return 'غير محدود';
 var value = Number(s);
 if (!isFinite(value) || value < 0) return 'غير متاح';
 if (value < 1024) return value + ' بايت';
@@ -283,7 +287,8 @@ return (value / 1073741824).toFixed(2) + ' جيجابايت';
 }
 function formatTime(v) {
 var s = trim(v), parts, units = {w:'أسبوع', d:'يوم', h:'ساعة', m:'دقيقة', s:'ثانية'};
-if (!s || s === '---' || s.toLowerCase() === 'unlimited') return 'غير محدود';
+if (!s || s === '---') return 'غير متاح';
+if (s.toLowerCase() === 'unlimited') return 'غير محدود';
 if (/^\d+(?::\d{1,2}){1,2}$/.test(s)) {
 var a = s.split(':');
 return a.length === 2 ? a[0] + ' دقيقة ' + a[1] + ' ثانية' : a[0] + ' ساعة ' + a[1] + ' دقيقة ' + a[2] + ' ثانية';
@@ -357,7 +362,7 @@ attemptUser = ''; attemptPass = '';
 function confirmLogin() {
 if (!loginPending) return;
 clearTimeout(loginConfirmTimer);
-if (loginConfirmCount >= 4) {
+if (loginConfirmCount >= 8 || (loginStartedAt && now() - loginStartedAt >= 18000)) {
 finishLogin(); attemptUser = ''; attemptPass = '';
 showError('لم يتم تأكيد الدخول من الراوتر، تحقق من حالة الكرت ثم حاول مجددا');
 return;
@@ -432,7 +437,19 @@ if (options.method === 'POST') xhr.setRequestHeader('Content-Type', 'application
 watchdog = setTimeout(function () { if (completed) return; try { xhr.abort(); } catch (ignore) {} done('TIMEOUT'); }, 10000);
 xhr.onreadystatechange = function () {
 if (xhr.readyState !== 4 || completed || requestEpoch !== epoch) return;
-if (xhr.status < 200 || xhr.status >= 300) { done('HTTP'); return; }
+if (xhr.status < 200 || xhr.status >= 300) {
+/* RouterOS and intermediaries may return a structured login rejection with
+   a non-2xx status. Preserve its specific reason rather than hiding it. */
+if (options.kind === 'login') {
+try {
+var rejection = JSON.parse(xhr.responseText.replace(/^\uFEFF/, ''));
+if (rejection && rejection.action === 'onLoginError' && dispatchByKind('login', rejection)) {
+xhr._portalComplete = true; done(false); return;
+}
+} catch (ignore) {}
+}
+done('HTTP'); return;
+}
 var data; try { data = JSON.parse(xhr.responseText.replace(/^\uFEFF/, '')); } catch (ignore) { done('INVALID_REPLY'); return; }
 xhr._portalComplete = true;
 try { if (!dispatchByKind(options.kind, data)) { done('INVALID_REPLY'); return; } } catch (ignore) { done('INVALID_REPLY'); return; }
@@ -455,7 +472,7 @@ showError(cfg.passwordRequired ? 'أدخل اسم المستخدم وكلمة ا
 return false;
 }
 clearTimeout(loginConfirmTimer); loginConfirmCount = 0;
-attemptUser = user; attemptPass = pass; loginPending = true;
+attemptUser = user; attemptPass = pass; loginPending = true; loginStartedAt = now();
 epoch++;
 if ($submit) { $submit.disabled = true; addClass($submit, 'processing'); }
 clearError();
@@ -533,6 +550,10 @@ input.addEventListener('input', normalise, false);
 input.addEventListener('compositionend', normalise, false);
 })(fields[i], i === 0);
 }
+function supportsAjax() {
+try { var probe = new XMLHttpRequest(); return typeof probe.open === 'function' && typeof probe.send === 'function'; }
+catch (ignore) { return false; }
+}
 function init() {
 $login = el('login'); $status = el('status'); $form = d.forms.login;
 $submit = d.querySelector('.login-submit'); $logout = d.querySelector('.logout-submit'); $error = el('error');
@@ -540,6 +561,12 @@ simplifyOnOldDevices(); renderDates(); resetStatus();
 setupPopups(); initInput(); renderCards(); initWelcome();
 showRedirectedLoginError();
 if ($form) $form.addEventListener('submit', function (event) {
+/* In restrictive/old captive browsers the native HotSpot POST must remain
+   operational, instead of swallowing the submission without an XHR client. */
+if (!supportsAjax()) {
+if ($form.username) $form.username.value = normalize($form.username.value, true);
+return;
+}
 if (event.preventDefault) event.preventDefault(); else event.returnValue = false;
 submit();
 }, false);
@@ -548,8 +575,8 @@ var clearHistory = el('clearPreviousCards');
 if (clearHistory) clearHistory.addEventListener('click', clearCards, false);
 d.addEventListener('visibilitychange', function () { if (signedIn && !logoutPending) scheduleStatus(); }, false);
 isBlocked();
-request('/status?var=callBack&t=' + now(), {kind:'boot'});
+if (supportsAjax()) request('/status?var=callBack&t=' + now(), {kind:'boot'});
 }
-w.PortalDiagnostics = { isLoggedIn:isLoggedIn, normalize:normalize, readableError:readableError, classifyHotspotError:classifyHotspotError };
+w.PortalDiagnostics = { isLoggedIn:isLoggedIn, normalize:normalize, readableError:readableError, classifyHotspotError:classifyHotspotError, formatTime:formatTime, formatBytes:formatBytes };
 ready(init);
 })(window, document);
