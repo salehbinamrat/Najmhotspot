@@ -1,0 +1,5 @@
+$(if var == "")
+<!doctype html><html lang="ar"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=index.html"><title>نجم نت</title></head><body><a href="index.html">بوابة نجم نت</a></body></html>
+$(else)
+{"logged_in":"$(logged-in)","username":"$(username-esc)","bytes_in":"$(bytes-in)","bytes_out":"$(bytes-out)","remain_bytes_total":"$(remain-bytes-total)","session_time_left":"$(session-time-left)","uptime":"$(uptime)","action":"onStatusQuery"}
+$(endif)

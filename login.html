@@ -1,0 +1,16 @@
+$(if var == "")
+<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>نجم نت - تسجيل الدخول</title><style>body{font-family:Arial,sans-serif;max-width:450px;margin:40px auto;padding:14px;text-align:center;background:#eef2f5;color:#1b2330}form{border:1px solid #b0b8c1;border-radius:14px;background:#fff;padding:22px}input,button{font-size:17px;display:block;width:100%;box-sizing:border-box;margin:12px 0;padding:12px;border-radius:9px;border:1px solid #8895a7}button{color:#fff;background:#1262ad;border:0}p{line-height:1.8}</style></head><body><h2>نجم نت</h2><p>أدخل رقم الكرت لتسجيل الدخول.</p>$(if error)<p role="alert" style="color:#a11629">الكرت خطأ، حاول بكرت آخر</p>$(endif)<form action="$(link-login-only)" method="post"><input name="username" maxlength="64" placeholder="رقم الكرت / اسم المستخدم" required autocomplete="off"><button type="submit">دخول</button></form><p><a href="index.html">فتح الصفحة الرئيسية</a></p><script>(function(){
+/* A direct Hotspot /login or /flogin request should use the main portal too.
+   Keep the original RouterOS reason for its single shared Arabic classifier. */
+var reason='$(error-orig-esc)' || '$(error-esc)', url='index.html';
+if (reason) { try { sessionStorage.setItem('najm_login_error_v1',reason); }
+catch (ignore) { url+='?hotspot_error='+reason; } }
+window.location.replace(url);
+})();</script></body></html>
+$(else)
+$(if error == "")
+{"logged_in":"$(logged-in)","action":"onLoginStart"}
+$(else)
+{"logged_in":"$(logged-in)","error_orig":"$(error-orig-esc)","error":"$(error-esc)","action":"onLoginError"}
+$(endif)
+$(endif)
